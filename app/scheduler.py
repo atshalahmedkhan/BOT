@@ -1,16 +1,39 @@
+"""One minute workspace clock; reads editable automation settings each tick."""
+from datetime import timezone
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.blocking import BlockingScheduler
+from sqlalchemy import select
 from .config import settings
-from .database import init_db
-from .service import run_pipeline
+from .database import Post, WorkspaceSetting, SessionLocal, init_db, now
+from .service import publish_post, run_pipeline
+from .workspace import automation, discover
+
+def tick():
+    with SessionLocal() as db:
+        config=automation(db)
+        if config['paused']: return
+        # Scheduling a draft is explicit approval for that post.
+        if not settings.dry_run:
+            due=db.scalars(select(Post).where(Post.status=='scheduled',Post.scheduled_at<=now()).order_by(Post.scheduled_at).limit(3)).all()
+            for post in due:
+                try: publish_post(db,post)
+                except Exception: pass  # publish_post stores the failure
+        local=now().astimezone(ZoneInfo(config['timezone']))
+        window=local.strftime('%H:%M')
+        if window not in config['post_times']: return
+        key=f"{local.date().isoformat()}:{window}"
+        last=db.get(WorkspaceSetting,'last_window')
+        if last and last.value.get('key')==key: return
+        if not last: last=WorkspaceSetting(key='last_window',value={});db.add(last)
+        last.value={'key':key};db.commit()
+    if config['generate']:
+        run_pipeline(dry_run=not config['publish_without_approval'], fetch_new=config['discover'])
+    elif config['discover']:
+        discover()
 
 def build_scheduler():
-    zone=ZoneInfo(settings.timezone)
-    scheduler=BlockingScheduler(timezone=zone)
-    for time in settings.post_times.split(','):
-        hour,minute=map(int,time.strip().split(':'))
-        if hour not in range(24) or minute not in range(60): raise ValueError(f'invalid POST_TIMES entry: {time}')
-        scheduler.add_job(run_pipeline,'cron',hour=hour,minute=minute,id=f'post_{hour:02d}{minute:02d}',max_instances=1,coalesce=True,misfire_grace_time=1800)
+    scheduler=BlockingScheduler(timezone=timezone.utc)
+    scheduler.add_job(tick,'interval',minutes=1,id='workspace_clock',max_instances=1,coalesce=True,misfire_grace_time=60)
     return scheduler
 
 if __name__=='__main__':

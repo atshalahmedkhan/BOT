@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, ForeignKey, String, Text, Float, Integer, DateTime, JSON
+from sqlalchemy import create_engine, ForeignKey, String, Text, Float, Integer, DateTime, JSON, Boolean, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from .config import settings
 
@@ -21,6 +21,7 @@ class Article(Base):
     score: Mapped[float] = mapped_column(Float, default=0)
     reason: Mapped[str] = mapped_column(Text, default='')
     topic: Mapped[str] = mapped_column(String(100), default='')
+    skipped: Mapped[bool] = mapped_column(Boolean, default=False)
 
 class Post(Base):
     __tablename__ = 'posts'
@@ -35,6 +36,7 @@ class Post(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     publisher_response: Mapped[dict | None] = mapped_column(JSON)
     feedback: Mapped[str | None] = mapped_column(String(20))
     feedback_reason: Mapped[str | None] = mapped_column(String(50))
@@ -51,6 +53,11 @@ class Run(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     estimated_cost: Mapped[float | None] = mapped_column(Float)
 
+class WorkspaceSetting(Base):
+    __tablename__ = 'workspace_settings'
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON)
+
 def make_engine(url=None):
     url = url or settings.database_url
     return create_engine(url, connect_args={'check_same_thread': False} if url.startswith('sqlite') else {})
@@ -58,4 +65,14 @@ def make_engine(url=None):
 engine = make_engine()
 SessionLocal = sessionmaker(engine)
 
-def init_db(): Base.metadata.create_all(engine)
+def init_db():
+    Base.metadata.create_all(engine)
+    # Existing SQLite databases predate the workspace fields. Keep their history.
+    if engine.dialect.name == 'sqlite':
+        with engine.begin() as connection:
+            columns = {column['name'] for column in inspect(connection).get_columns('articles')}
+            if 'skipped' not in columns:
+                connection.execute(text('ALTER TABLE articles ADD COLUMN skipped BOOLEAN NOT NULL DEFAULT 0'))
+            columns = {column['name'] for column in inspect(connection).get_columns('posts')}
+            if 'scheduled_at' not in columns:
+                connection.execute(text('ALTER TABLE posts ADD COLUMN scheduled_at DATETIME'))

@@ -7,6 +7,7 @@ from .database import Article, Post, Run, SessionLocal, init_db
 from .service import run_pipeline, generate_for_article, publish_post
 from .ai import AIClient
 from .validation import x_length
+from .workspace import router as workspace_router
 import re
 
 @asynccontextmanager
@@ -15,6 +16,7 @@ async def lifespan(app):
     yield
 
 app=FastAPI(title='Personal X News Bot',lifespan=lifespan)
+app.include_router(workspace_router)
 
 def item(x):
     d={k:v for k,v in vars(x).items() if not k.startswith('_')}
@@ -93,7 +95,7 @@ def feedback(post_id:int,body:Feedback):
     with SessionLocal() as db:
         p=db.get(Post,post_id)
         if not p: raise HTTPException(404,'post not found')
-        p.feedback=body.rating;p.feedback_reason=body.reason;db.commit()
+        p.feedback=body.rating;p.feedback_reason=body.reason;db.commit();db.refresh(p)
         return item(p)
 
 @app.post('/publish/{post_id}')

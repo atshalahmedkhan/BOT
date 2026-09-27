@@ -57,7 +57,7 @@ def test_gemini_provider_contract(monkeypatch):
 def test_database_scheduler_and_api():
     engine=make_engine('sqlite:///:memory:');Base.metadata.create_all(engine)
     assert 'articles' in Base.metadata.tables
-    assert len(build_scheduler().get_jobs())==len(settings.post_times.split(','))
+    assert len(build_scheduler().get_jobs())==1
     with TestClient(app) as client:
         assert client.get('/health').json()['dry_run'] is True
         assert client.get('/stats').status_code==200

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from .ai import AIClient, MissingCredential
 from .config import settings
-from .database import Article, Post, Run, SessionLocal, now
+from .database import Article, Post, Run, WorkspaceSetting, SessionLocal, now
 from .news import fetch_stories, duplicate, score_story
 from .personalization import interests, feedback_signals
 from .publishing import publisher
@@ -17,8 +17,8 @@ def topic_for(story):
 def story_data(a):
     return {'headline':a.title,'description':a.description,'source':a.source,'publication_date':a.published_at.isoformat() if a.published_at else None,'url':a.url,'category':a.category,'title':a.title}
 
-def generate_for_article(db, article, run=None, ai=None):
-    recent=db.scalars(select(Post).order_by(Post.id.desc()).limit(30)).all()
+def generate_for_article(db, article, run=None, ai=None, exclude_post_id=None):
+    recent=[p for p in db.scalars(select(Post).order_by(Post.id.desc()).limit(50)).all() if p.id != exclude_post_id][:30]
     feedback=feedback_signals(recent)
     if run: run.ai_calls+=1; db.commit()
     model, in_tokens, out_tokens=(ai or AIClient()).generate(story_data(article),feedback)
@@ -33,7 +33,7 @@ def generate_for_article(db, article, run=None, ai=None):
 
 def publish_post(db, post, force=False):
     if settings.dry_run: raise RuntimeError('DRY_RUN=true blocks all publishing')
-    if post.status!='generated': raise ValueError('Only validated generated posts can publish')
+    if post.status not in {'generated','scheduled'}: raise ValueError('Only validated drafts or scheduled posts can publish')
     if not post.text.strip() or x_length(post.text)>280: raise ValueError('Post is empty or over X character limit')
     if post.article and post.article.url not in post.text: raise ValueError('Source URL missing from post')
     from zoneinfo import ZoneInfo
@@ -56,13 +56,13 @@ def publish_post(db, post, force=False):
     db.commit(); db.refresh(post)
     return post
 
-def run_pipeline(dry_run=None, ai=None):
+def run_pipeline(dry_run=None, ai=None, fetch_new=True):
     # Explicit dry-run always wins. Settings are the final publish gate.
     dry=settings.dry_run if dry_run is None else dry_run
     with SessionLocal() as db:
         run=Run(); db.add(run); db.commit(); db.refresh(run)
         try:
-            stories,errors=fetch_stories(); run.stories_fetched=len(stories)
+            stories,errors=fetch_stories() if fetch_new else ([],[]); run.stories_fetched=len(stories)
             existing=db.scalars(select(Article).order_by(Article.id.desc()).limit(1000)).all()
             recent_posts=db.scalars(select(Post).where(Post.status.in_(['published','queued'])).order_by(Post.id.desc()).limit(20)).all()
             new=[]; seen=[]
@@ -75,15 +75,17 @@ def run_pipeline(dry_run=None, ai=None):
             db.commit()
             # Previously seen but unposted articles remain eligible for later windows.
             source_priorities={s['name']:int(s.get('priority',1)) for s in yaml.safe_load((ROOT/'config/sources.yaml').read_text(encoding='utf-8'))['sources']}
-            candidates=db.scalars(select(Article).where(Article.seen_at>=now()-timedelta(days=7)).order_by(Article.id.desc()).limit(500)).all()
+            candidates=db.scalars(select(Article).where(Article.seen_at>=now()-timedelta(days=7),Article.skipped==False).order_by(Article.id.desc()).limit(500)).all()
             used={p.article_id for p in db.scalars(select(Post).where(Post.article_id.is_not(None))).all()}
             ranked=[]
+            automation_row=db.get(WorkspaceSetting,'automation')
+            threshold=(automation_row.value.get('minimum_relevance',settings.min_score) if automation_row else settings.min_score)
             for a in candidates:
                 if a.id in used: continue
                 published=a.published_at.replace(tzinfo=timezone.utc) if a.published_at and a.published_at.tzinfo is None else a.published_at
                 s={'title':a.title,'description':a.description,'category':a.category,'published_at':published,'priority':source_priorities.get(a.source,1)}
                 a.score,a.reason=score_story(s,interests(),recent_posts)
-                if a.score>=settings.min_score: ranked.append(a)
+                if a.score>=threshold: ranked.append(a)
             selected=max(ranked,key=lambda a:a.score,default=None)
             if not selected:
                 run.status='skipped'; run.detail='No suitable unposted story. '+ '; '.join(errors[:3]); db.commit()
