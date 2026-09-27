@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from fastapi.testclient import TestClient
-from app.ai import Generated
+from app.ai import Generated, AIClient
 from app.main import app
 from app.news import parse_feed, norm_url, duplicate, score_story
 from app.personalization import voice, examples, interests
@@ -34,6 +34,25 @@ def test_personalization_and_output():
     assert validate_post(g,a,[])[0]==[]
     bad=Generated(post='I tested this and it improved speed by 90%.',style='reaction',confidence=.9,factual_claims=['Improved by 90%'])
     assert validate_post(bad,a,[])[0]
+
+def test_gemini_provider_contract(monkeypatch):
+    from app import ai
+    monkeypatch.setattr(ai.settings,'gemini_api_key','test-only-key')
+    class Response:
+        def raise_for_status(self): pass
+        def json(self): return {'candidates':[{'content':{'parts':[{'text':'{"post":"A grounded observation.","style":"reaction","confidence":0.9,"factual_claims":[]}' }]}}],'usageMetadata':{'promptTokenCount':42,'candidatesTokenCount':17}}
+    class Client:
+        def __init__(self,timeout): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): pass
+        def post(self,url,headers,json):
+            assert url.endswith('/gemini-2.5-flash-lite:generateContent')
+            assert headers['x-goog-api-key']=='test-only-key'
+            assert json['generationConfig']['responseFormat']['text']['mimeType']=='application/json'
+            return Response()
+    monkeypatch.setattr(ai.httpx,'Client',Client)
+    generated,input_tokens,output_tokens=AIClient('gemini','gemini-2.5-flash-lite').generate({'title':'test','category':'technology'})
+    assert generated.style=='reaction' and (input_tokens,output_tokens)==(42,17)
 
 def test_database_scheduler_and_api():
     engine=make_engine('sqlite:///:memory:');Base.metadata.create_all(engine)

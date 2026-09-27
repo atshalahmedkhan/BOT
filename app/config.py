@@ -10,8 +10,9 @@ class Settings(BaseSettings):
     timezone: str = 'America/New_York'
     post_times: str = '09:00,14:00,20:00'
     dry_run: bool = True
-    ai_provider: str = 'xai'
-    ai_model: str = ''
+    ai_provider: str = 'gemini'
+    ai_model: str = 'gemini-2.5-flash-lite'
+    gemini_api_key: str = ''
     xai_api_key: str = ''
     openai_api_key: str = ''
     publisher: str = 'buffer'

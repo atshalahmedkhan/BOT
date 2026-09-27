@@ -40,7 +40,7 @@ The model receives feed headline, short description, source, publication date, U
 
 ## AI and publishing
 
-Set `AI_PROVIDER=xai` or `openai`, `AI_MODEL` to a model your account can use, and the corresponding API key in `.env`. Without a key, the live run collects and ranks news, then records a generation failure. No key is needed for tests.
+For a no-cost start, use the default `AI_PROVIDER=gemini` with `AI_MODEL=gemini-2.5-flash-lite` and a free-tier `GEMINI_API_KEY` from [Google AI Studio](https://aistudio.google.com/apikey). Check [current pricing](https://ai.google.dev/gemini-api/docs/pricing) and your [account's rate limits](https://ai.google.dev/gemini-api/docs/rate-limits); free-tier requests are limited and Google says free-tier content may be used to improve its products. Do not link a paid billing tier if you require a strict zero-cost setup. The existing `xai` and `openai` providers remain optional; set `AI_PROVIDER` and `AI_MODEL` to switch. Without the selected provider's key, the live run collects and ranks news, then records a generation failure. No key is needed for tests.
 
 `PUBLISHER=buffer` uses Buffer's GraphQL API, a personal API key, and the ID of your connected X channel (`BUFFER_CHANNEL_ID`). Buffer's `shareNow` accepts the post but delivery may be asynchronous, so the database uses `queued` until delivery is independently confirmed. `PUBLISHER=direct_x` uses X API v2 with OAuth 1.0a user credentials. Confirm your X app has posting access. `DRY_RUN=true` blocks both publishers, including manual `POST /publish/{post_id}`. Set it to `false` only after previewing output and configuring credentials. The custom idea endpoint generates and stores a draft; it never publishes automatically.
 
@@ -52,4 +52,4 @@ Feeds, ranking, deduplication, and storage are local and free. A normal window m
 
 Run tests: `.\.venv\Scripts\python -m pytest -q`. Tests never call a live publisher.
 
-Official API references: [OpenAI Responses](https://platform.openai.com/docs/api-reference/responses), [xAI Responses](https://docs.x.ai/developers/rest-api-reference/inference/responses), [Buffer create post](https://developers.buffer.com/examples/create-text-post.html), [Buffer scheduling](https://developers.buffer.com/guides/posts-and-scheduling.html), [X API](https://docs.x.com/x-api/posts/manage-tweets/introduction).
+Official API references: [Gemini structured output](https://ai.google.dev/gemini-api/docs/generate-content/structured-output), [OpenAI Responses](https://platform.openai.com/docs/api-reference/responses), [xAI Responses](https://docs.x.ai/developers/rest-api-reference/inference/responses), [Buffer create post](https://developers.buffer.com/examples/create-text-post.html), [Buffer scheduling](https://developers.buffer.com/guides/posts-and-scheduling.html), [X API](https://docs.x.com/x-api/posts/manage-tweets/introduction).
