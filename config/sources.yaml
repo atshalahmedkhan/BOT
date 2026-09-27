@@ -1,0 +1,7 @@
+sources:
+  - {name: OpenAI News, url: 'https://openai.com/news/rss.xml', category: artificial intelligence, priority: 5, enabled: true}
+  - {name: Google DeepMind, url: 'https://deepmind.google/blog/rss.xml', category: artificial intelligence, priority: 5, enabled: true}
+  - {name: Hacker News, url: 'https://news.ycombinator.com/rss', category: developer tools, priority: 3, enabled: true}
+  - {name: TechCrunch, url: 'https://techcrunch.com/feed/', category: startups, priority: 3, enabled: true}
+  - {name: MIT Technology Review, url: 'https://www.technologyreview.com/feed/', category: technology, priority: 4, enabled: true}
+  - {name: The Register, url: 'https://www.theregister.com/headlines.atom', category: software engineering, priority: 3, enabled: true}

@@ -1,0 +1,11 @@
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+SQLAlchemy>=2.0,<3
+pydantic-settings>=2.7,<3
+feedparser>=6.0,<7
+httpx>=0.28,<1
+APScheduler>=3.10,<4
+PyYAML>=6,<7
+python-dotenv>=1,<2
+requests-oauthlib>=2,<3
+pytest>=8,<10
