@@ -13,7 +13,7 @@ export type Post = {
 export type Run = { id: number; status: string; detail: string; started_at: string; stories_fetched: number };
 export type Automation = {
   paused: boolean; discover: boolean; generate: boolean; publish_without_approval: boolean;
-  post_times: string[]; timezone: string; minimum_relevance: number; dry_run: boolean;
+  post_times: string[]; timezone: string; minimum_relevance: number; dry_run: boolean; scheduler_online: boolean;
 };
 export type WorkspaceData = { articles: Article[]; posts: Post[]; runs: Run[]; automation: Automation };
 export type Source = { name: string; url: string; category: string; priority: number; enabled: boolean };

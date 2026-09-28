@@ -10,6 +10,9 @@ from .workspace import automation, discover
 
 def tick():
     with SessionLocal() as db:
+        heartbeat=db.get(WorkspaceSetting,'scheduler_heartbeat')
+        if not heartbeat: heartbeat=WorkspaceSetting(key='scheduler_heartbeat',value={});db.add(heartbeat)
+        heartbeat.value={'at':now().isoformat()};db.commit()
         config=automation(db)
         if config['paused']: return
         # Scheduling a draft is explicit approval for that post.

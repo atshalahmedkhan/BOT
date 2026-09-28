@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
+    setLoaded(false);
     try {
       if (section === "voice") {
         const [v, p] = await Promise.all([api<{ description: string; examples: string[] }>("/settings/voice"), api<Post[]>("/posts?limit=100")]);
@@ -30,8 +31,8 @@ export default function SettingsPage() {
       }
       if (section === "sources") setSources((await api<{ sources: Source[] }>("/settings/sources")).sources);
       if (section === "automation") setAutomation(await api<Automation>("/settings/automation"));
+      setLoaded(true);
     } catch (error) { setNotice(error instanceof Error ? error.message : "Settings could not be loaded."); }
-    finally { setLoaded(true); }
   }, [section]);
   useEffect(() => { void Promise.resolve().then(load); }, [load]);
   async function save(path: string, body: unknown) {

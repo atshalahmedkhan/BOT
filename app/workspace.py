@@ -1,6 +1,7 @@
 """Small persistence and editing API for the editorial workspace."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 import json
 import re
@@ -13,7 +14,7 @@ from .database import Article, Post, Run, WorkspaceSetting, SessionLocal, now
 from .news import fetch_stories, duplicate, score_story
 from .personalization import interests
 from .service import generate_for_article, topic_for, publish_post
-from .validation import x_length
+from .validation import x_length, validate_post
 
 router = APIRouter()
 VOICE_PATH = ROOT / 'VOICE_PROFILE.md'
@@ -31,6 +32,15 @@ def automation(db):
         'timezone': settings.timezone, 'minimum_relevance': settings.min_score,
     }
 
+def automation_state(db):
+    heartbeat = db.get(WorkspaceSetting, 'scheduler_heartbeat')
+    last_seen = heartbeat.value.get('at') if heartbeat else None
+    try:
+        online = bool(last_seen and datetime.fromisoformat(last_seen) >= now() - timedelta(minutes=3))
+    except (TypeError, ValueError):
+        online = False
+    return {**automation(db), 'dry_run': settings.dry_run, 'scheduler_online': online}
+
 class AutomationUpdate(BaseModel):
     paused: bool = False
     discover: bool = True
@@ -42,7 +52,7 @@ class AutomationUpdate(BaseModel):
 
 @router.get('/settings/automation')
 def get_automation():
-    with SessionLocal() as db: return {**automation(db), 'dry_run': settings.dry_run}
+    with SessionLocal() as db: return automation_state(db)
 
 @router.put('/settings/automation')
 def put_automation(body: AutomationUpdate):
@@ -55,7 +65,7 @@ def put_automation(body: AutomationUpdate):
         row = db.get(WorkspaceSetting, 'automation')
         if not row: row = WorkspaceSetting(key='automation', value={}); db.add(row)
         row.value = body.model_dump(); db.commit()
-        return {**row.value, 'dry_run': settings.dry_run}
+        return automation_state(db)
 
 class VoiceUpdate(BaseModel):
     description: str = Field(min_length=20, max_length=10000)
@@ -129,11 +139,21 @@ class PostUpdate(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     style: Literal['reaction','explanation','builder_perspective','question','straightforward']
 
-def check_edit(post, text):
+def check_edit(post, text, db):
     if x_length(text) > 280: raise HTTPException(422, 'Post exceeds X character limit')
     if post.article and post.article.url not in text: raise HTTPException(422, 'Source URL must remain in post')
     if re.search(r"\b(I|we)\s+(tried|tested|used|attended|spoke|met|visited|built|saw)\b|\b(I've|we've)\s+(tried|tested|used|attended|spoken|met|visited|built|seen)\b", text, re.I):
         raise HTTPException(422, 'Unsupported personal experience')
+    if len(re.findall(r'(?<!\w)#\w+', text)) > 2: raise HTTPException(422, 'Too many hashtags')
+    if len(re.findall(r'[\U0001F300-\U0001FAFF]', text)) > 2: raise HTTPException(422, 'Too many emoji')
+    if post.article:
+        body = text.replace(post.article.url, '', 1)
+        previous = db.scalars(select(Post).where(Post.id != post.id).order_by(Post.id.desc()).limit(50)).all()
+        generated = SimpleNamespace(post=body, confidence=post.confidence if post.status == 'failed' else max(post.confidence, .65), factual_claims=[])
+        errors, _ = validate_post(generated, post.article, previous)
+        if errors: raise HTTPException(422, '; '.join(errors))
+        already_used = db.scalars(select(Post).where(Post.article_id == post.article_id, Post.id != post.id, Post.status.in_(['generated', 'scheduled', 'published', 'queued']))).first()
+        if already_used: raise HTTPException(409, 'Article already has an active or published post')
 
 @router.patch('/posts/{post_id}')
 def update_post(post_id: int, body: PostUpdate):
@@ -141,8 +161,9 @@ def update_post(post_id: int, body: PostUpdate):
         post=db.get(Post, post_id)
         if not post: raise HTTPException(404, 'Post not found')
         if post.status in {'published','queued'}: raise HTTPException(409, 'Published or queued posts cannot be edited')
-        check_edit(post, body.text)
+        check_edit(post, body.text, db)
         post.text=body.text.strip();post.style=body.style
+        post.factual_claims=[]
         if post.status in {'failed','archived'}: post.status='generated';post.failure_reason=''
         db.commit();db.refresh(post);return record(post)
 
@@ -158,7 +179,7 @@ def schedule_post(post_id: int, body: ScheduleInput):
         post=db.get(Post,post_id)
         if not post: raise HTTPException(404, 'Post not found')
         if post.status not in {'generated','scheduled'}: raise HTTPException(409, 'Only valid drafts can be scheduled')
-        check_edit(post,post.text)
+        check_edit(post,post.text,db)
         post.scheduled_at=when.astimezone(timezone.utc);post.status='scheduled'
         db.commit();db.refresh(post);return record(post)
 
@@ -181,7 +202,7 @@ def regenerate(post_id: int):
         try:
             replacement=generate_for_article(db,post.article,run,exclude_post_id=post.id)
             if replacement.status=='generated': post.status='archived'
-            run.status=replacement.status;db.commit()
+            run.status=replacement.status;db.commit();db.refresh(replacement)
             return record(replacement)
         except Exception as exc:
             run.status='failed';run.detail=str(exc);db.commit()
@@ -190,9 +211,14 @@ def regenerate(post_id: int):
 @router.get('/workspace')
 def workspace():
     with SessionLocal() as db:
+        articles=db.scalars(select(Article).order_by(Article.id.desc()).limit(500)).all()
+        posts=db.scalars(select(Post).order_by(Post.id.desc())).all()
+        known={article.id for article in articles}
+        missing={post.article_id for post in posts if post.article_id and post.article_id not in known}
+        if missing: articles.extend(db.scalars(select(Article).where(Article.id.in_(missing))).all())
         return {
-            'articles':[record(row) for row in db.scalars(select(Article).order_by(Article.id.desc()).limit(500)).all()],
-            'posts':[record(row) for row in db.scalars(select(Post).order_by(Post.id.desc()).limit(300)).all()],
+            'articles':[record(row) for row in articles],
+            'posts':[record(row) for row in posts],
             'runs':[record(row) for row in db.scalars(select(Run).order_by(Run.id.desc()).limit(20)).all()],
-            'automation':{**automation(db),'dry_run':settings.dry_run},
+            'automation':automation_state(db),
         }
